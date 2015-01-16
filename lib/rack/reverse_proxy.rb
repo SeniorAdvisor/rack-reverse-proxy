@@ -1,5 +1,6 @@
 require 'net/http'
 require 'net/https'
+require 'forwardable'
 
 module Rack
   class ReverseProxy
@@ -8,6 +9,20 @@ module Rack
       @matchers = []
       @global_options = {:preserve_host => true, :matching => :all, :verify_ssl => true}
       instance_eval &b if block_given?
+    end
+
+    class CustomHeader
+      extend Forwardable
+      attr_accessor :headers
+      def initialize
+        @headers = {}
+      end
+
+      def add_header name, value
+        @headers[name.to_s] = value.to_s
+      end
+
+      def_delegator :@headers, :each
     end
 
     def call(env)
@@ -25,6 +40,13 @@ module Rack
       }
       headers['HOST'] = uri.host if all_opts[:preserve_host]
       headers['HOST'] = all_opts[:proxy_host] if all_opts[:proxy_host]
+      if matcher.block && matcher.block.respond_to?(:call)
+         custom_header = CustomHeader.new
+         custom_header.instance_exec(env,&matcher.block)
+         custom_header.each do |k,v|
+           headers[k] = v
+         end
+      end
  
       session = Net::HTTP.new(uri.host, uri.port)
       session.read_timeout=all_opts[:timeout] if all_opts[:timeout]
@@ -102,9 +124,9 @@ module Rack
       @global_options=options
     end
 
-    def reverse_proxy matcher, url, opts={}
+    def reverse_proxy matcher, url, opts={}, &block
       raise GenericProxyURI.new(url) if matcher.is_a?(String) && url.is_a?(String) && URI(url).class == URI::Generic
-      @matchers << ReverseProxyMatcher.new(matcher,url,opts)
+      @matchers << ReverseProxyMatcher.new(matcher,url,opts, &block)
     end
   end
 
@@ -139,14 +161,15 @@ module Rack
   end
 
   class ReverseProxyMatcher
-    def initialize(matching,url,options)
+    def initialize(matching,url,options, &block)
       @matching=matching
       @url=url
       @options=options
       @matching_regexp= matching.kind_of?(Regexp) ? matching : /^#{matching.to_s}/
+      @block = block
     end
 
-    attr_reader :matching,:matching_regexp,:url,:options
+    attr_reader :matching,:matching_regexp,:url,:options, :block
 
     def match?(path)
       match_path(path) ? true : false

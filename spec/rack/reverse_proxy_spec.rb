@@ -12,6 +12,35 @@ describe Rack::ReverseProxy do
     lambda { |env| [200, {}, ['Dummy App']] }
   end
 
+  describe 'with block' do
+    def app
+      Rack::ReverseProxy.new(dummy_app) do
+        reverse_proxy '/test', 'http://example.com/', {:preserve_host => true} do
+          add_header "X-Forwarded-For", "abc.com"
+        end
+        reverse_proxy '/2test', lambda{ |env| 'http://example.com/'} do
+          add_header "Content-Type", "application/json"
+        end
+      end
+    end
+    it "should forward requests to the calling app when the path is not matched" do
+      stub_request(:get, 'http://example.com/test').to_return do |r|
+        {:body => r.headers["X-Forwarded-For"]}
+      end
+      stub_request(:get, 'http://example.com/2test').to_return do |r|
+        {:body => r.headers["Content-Type"]}
+      end
+      get '/'
+      last_response.body.should == "Dummy App"
+      last_response.should be_ok
+      get '/test'
+      last_response.body.should == "abc.com"
+      last_response.should be_ok
+      get '/2test'
+      last_response.body.should == "application/json"
+      last_response.should be_ok
+    end
+  end
   describe "as middleware" do
     def app
       Rack::ReverseProxy.new(dummy_app) do
