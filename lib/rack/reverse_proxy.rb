@@ -21,7 +21,6 @@ module Rack
       def add_header name, value
         @headers[name.to_s] = value.to_s
       end
-
       def_delegator :@headers, :each
     end
 
